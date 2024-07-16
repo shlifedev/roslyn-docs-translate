@@ -2,24 +2,22 @@
 
 ## Summary
 
-Incremental generators are a new API that exists alongside
-[source generators](source-generators.md) to allow users to specify generation
-strategies that can be applied in a high performance way by the hosting layer.
+
+증분 생성기는 다음과 함께 존재하는 새로운 API입니다.
+[소스 생성기](source-generators.md)와 함께 존재하는 새로운 API로, 사용자가 생성을 지정할 수 있습니다.
+전략을 호스팅 계층에서 고성능으로 적용할 수 있습니다.
 
 ### High Level Design Goals
 
-- Allow for a finer grained approach to defining a generator
-- Scale source generators to support 'Roslyn/CoreCLR' scale projects in Visual Studio
-- Exploit caching between fine grained steps to reduce duplicate work
-- Support generating more items than just source texts
-- Exist alongside `ISourceGenerator` based implementations
-
+- 제너레이터를 보다 세밀하게 정의할 수 있는 접근 방식 허용
+- Visual Studio에서 'Roslyn/CoreCLR' 스케일 프로젝트를 지원하도록 소스 제너레이터 확장
+- 세분화된 단계 간에 캐싱을 활용하여 중복 작업 감소
+- 소스 텍스트뿐만 아니라 더 많은 항목 생성 지원
+- ISourceGenerator` 기반 구현과 함께 존재
+  
 ## Simple Example
 
-We begin by defining a simple incremental generator that extracts the contents
-of additional text files and makes their contents available as compile time
-`const`s. In the following section we'll go into more depth around the concepts
-shown.
+먼저 추가 텍스트 파일의 내용을 추출하고 그 내용을 컴파일 시간 `const`로 사용할 수 있도록 하는 간단한 증분 생성기를 정의합니다. 다음 섹션에서는 표시된 개념에 대해 더 자세히 살펴보겠습니다.
 
 ```csharp
 [Generator]
@@ -27,15 +25,14 @@ public class Generator : IIncrementalGenerator
 {
     public void Initialize(IncrementalGeneratorInitializationContext initContext)
     {
-        // define the execution pipeline here via a series of transformations:
-
-        // find all additional files that end with .txt
+        // 여기에서 파이프라인을 정의합니다:
+        // .txt로 끝나는 모든 추가 파일 (addtional files) 찾기
         IncrementalValuesProvider<AdditionalText> textFiles = initContext.AdditionalTextsProvider.Where(static file => file.Path.EndsWith(".txt"));
 
-        // read their contents and save their name
+        // 내용을 읽고 이름을 저장합니다.
         IncrementalValuesProvider<(string name, string content)> namesAndContents = textFiles.Select((text, cancellationToken) => (name: Path.GetFileNameWithoutExtension(text.Path), content: text.GetText(cancellationToken)!.ToString()));
 
-        // generate a class that contains their values as const strings
+         //해당 값을 const 문자열로 포함하는 클래스를 생성합니다.
         initContext.RegisterSourceOutput(namesAndContents, (spc, nameAndContent) =>
         {
             spc.AddSource($"ConstStrings.{nameAndContent.name}", $@"
@@ -50,7 +47,8 @@ public class Generator : IIncrementalGenerator
 
 ## Implementation
 
-An incremental generator is an implementation of `Microsoft.CodeAnalysis.IIncrementalGenerator`.
+증분 제너레이터는 `Microsoft.CodeAnalysis.IIncrementalGenerator`의 구현입니다.
+
 
 ```csharp
 namespace Microsoft.CodeAnalysis
@@ -62,48 +60,39 @@ namespace Microsoft.CodeAnalysis
 }
 ```
 
-As with source generators, incremental generators are defined in external
-assemblies and passed to the compiler via the `-analyzer:` option.
-Implementations are required to be annotated with the
-`Microsoft.CodeAnalysis.GeneratorAttribute` with an optional parameter
-indicating the languages the generator supports:
+소스 제너레이터와 마찬가지로 증분 제너레이터는 외부 어셈블리에서 정의되며 `-analyzer:` 옵션을 통해 컴파일러에 전달됩니다.
+
+구현에는 제너레이터가 지원하는 언어를 나타내는 선택적 매개변수와 함께 `Microsoft.CodeAnalysis.GeneratorAttribute`로 주석을 달아야 합니다:
+
 
 ```csharp
 [Generator(LanguageNames.CSharp)]
 public class MyGenerator : IIncrementalGenerator { ... }
 ```
 
-An assembly can contain a mix of diagnostic analyzers, source generators and
-incremental generators.
+어셈블리에는 진단 분석기, 소스 생성기, 증분 생성기가 혼합되어 있을 수 있습니다.
+
 
 ### Pipeline based execution
 
-`IIncrementalGenerator` has an `Initialize` method that is called by the
-host[^1] exactly once, regardless of the number of further compilations that may
-occur. For instance a host with multiple loaded projects may share the same
-generator instance across multiple projects, and will only call `Initialize` a
-single time for the lifetime of the host.
+IIncrementalGenerator`에는 추가 컴파일 횟수에 관계없이 호스트[^1]가 정확히 한 번 호출하는 `Initialize` 메서드가 있습니다. 예를 들어 로드된 프로젝트가 여러 개 있는 호스트는 여러 프로젝트에서 동일한
+생성기 인스턴스를 여러 프로젝트에서 공유할 수 있으며, 호스트의 수명 동안 `Initialize`를 한 번만 호출합니다.
 
-[^1]: Such as the IDE or the command-line compiler
 
-Rather than a dedicated `Execute` method, an Incremental Generator instead
-defines an immutable execution pipeline as part of initialization. The
-`Initialize` method receives an instance of
-`IncrementalGeneratorInitializationContext` which is used by the generator to
-define a set of transformations.
+[^1]: IDE 또는 명령줄 컴파일러 등을 이야기합니다.
 
+- 증분 생성기는 전용 '실행' 메서드 대신 초기화의 일부로 변경 불가능한 실행 파이프라인을 정의합니다.
+- 초기화` 메서드는 제너레이터가 변환 집합을 정의하는 데 사용하는 `IncrementalGeneratorInitializationContext`의 인스턴스를 받습니다.
 
 ```csharp
 public void Initialize(IncrementalGeneratorInitializationContext initContext)
 {
-    // define the execution pipeline here via a series of transformations:
+    // 일련의 변환을 통해 여기에서 실행 파이프라인을 정의합니다
 }
 ```
 
-The defined transformations are not executed directly at initialization, and
-instead are deferred until the data they are using changes. Conceptually this is
-similar to LINQ, where a lambda expression might not be executed until the
-enumerable is actually iterated over:
+정의된 변환은 초기화 시 바로 실행되지 않고 사용 중인 데이터가 변경될 때까지 지연됩니다. 
+개념적으로 이것은 열거형이 실제로 반복될 때까지 람다 표현식이 실행되지 않을 수 있는 LINQ와 유사합니다:
 
 **IEnumerable**:
 
@@ -114,42 +103,51 @@ enumerable is actually iterated over:
     foreach (var square in squares) { ... }
 ```
 
-These transformations are used to form a directed graph of actions that can be
-executed on demand later, as the input data changes.
+이러한 변환을 사용하여 나중에 입력 데이터가 변경될 경우 나중에 입력 데이터가 변경되면 필요에 따라 실행할 수 있습니다.
 
 **Incremental Generators**:
 
 ```csharp
     IncrementalValuesProvider<AdditionalText> textFiles = context.AdditionalTextsProvider.Where(static file => file.Path.EndsWith(".txt"));
-    // the code in the Where(...) above will not be executed until the value of the additional texts actually changes
+    // 위의 Where(...)의 코드는 추가 텍스트의 값이 실제로 변경될 때까지 실행되지 않습니다.
 ```
  
-Between each transformation, the data produced is cached, allowing previously calculated
-values to be re-used where applicable. This caching reduces the computation
-required for subsequent compilations. See [caching](#caching) for more details.
+각 변환 사이에 생성된 데이터는 캐싱되어 이전에 계산된 값을 해당되는 경우 재사용할 수 있습니다. 
+
+이 캐싱은 후속 컴파일에 필요한 계산을 줄여줍니다. 자세한 내용은 [캐싱](#캐싱)을 참조하세요.
+
+
+
+
+
+
+
+
 
 ### IncrementalValue\[s\]Provider&lt;T&gt;
 
-Input data is available to the pipeline in the form of opaque data sources,
-either an `IncrementalValueProvider<T>` or `IncrementalValuesProvider<T>` (note
-the plural _values_) where _T_ is the type of input data that is provided.
+입력 데이터는 파이프라인에서 불투명 데이터 소스인 `IncrementalValueProvider<T>` 또는 `IncrementalValuesProvider<T>` 형태로 사용할 수 있습니다. 
 
-An initial set of providers are created by the host, and can be accessed from the
-`IncrementalGeneratorInitializationContext` provided during initialization.
+(복수형 _값_에 유의하세요. 여기서 _T_는 제공되는 입력 데이터의 유형입니다.
+
+초기 공급자 세트는 호스트에 의해 생성되며, 호스트의 초기화 중에 제공된 
+`IncrementalGeneratorInitializationContext`에서 액세스할 수 있습니다.
+
 
 The currently available providers are:
 
-- CompilationProvider
-- AdditionalTextsProvider
-- AnalyzerConfigOptionsProvider
-- MetadataReferencesProvider
-- ParseOptionsProvider
+- CompilationProvider // 컴파일 공급자
+- AdditionalTextsProvider // 추가 텍스트 제공자
+- AnalyzerConfigOptionsProvider // 분석기구성옵션제공자
+- MetadataReferencesProvider // 메타데이터 참조 공급자
+- ParseOptionsProvider // 파싱옵션 공급자
 
 *Note*: there is no provider for accessing syntax nodes. This is handled
 in a slightly different way. See [SyntaxValueProvider](#syntaxvalueprovider) for details.
 
-A value provider can be thought of as a 'box' that holds the value itself. An
-execution pipeline does not access the values in a value provider directly.
+
+
+값 제공자는 가치 자체를 담는 '상자'로 생각할 수 있습니다. 실행 파이프라인은 값 프로바이더의 값에 직접 액세스하지 않습니다.
 
 ```ascii
 IValueProvider<TSource>
@@ -160,13 +158,11 @@ IValueProvider<TSource>
    └─────────────┘
 ```
 
-Instead, the generator supplies a set of transformations that are to be applied to the
-data contained within the provider, which in turn creates a new value provider.
+대신, 제너레이터는 공급자 내에 포함된 데이터에 적용될 일련의 변환을 제공하여 새로운 값 공급자를 생성합니다.
 
 ### Select
 
-The simplest transformation is `Select`. This maps the value in one provider
-into a new provider by applying a transform to it.
+가장 간단한 변환은 `Select`입니다. 이것은 한 공급자에 있는 값을 변환을 적용하여 새 공급자로 매핑합니다. (Linq와 비슷함)
 
 ```ascii
  IValueProvider<TSource>                   IValueProvider<TResult>
@@ -177,9 +173,8 @@ into a new provider by applying a transform to it.
     └─────────────┘                           └─────────────┘
 ```
 
-Generator transformations can be thought of as being conceptually somewhat similar to
-LINQ, with the value provider taking the place of `IEnumerable<T>`.
-Transforms are created through a set of extension methods:
+제너레이터 변환은 개념적으로 '값 공급자'가 'Inumerable<T>'를 대신한다는 점에서 LINQ와 어느 정도 유사하다고 생각할 수 있습니다.
+트랜스폼은 일련의 확장 메서드를 통해 생성됩니다:
 
 ```csharp
 public static partial class IncrementalValueSourceExtensions
@@ -189,10 +184,9 @@ public static partial class IncrementalValueSourceExtensions
     public static IncrementalValuesProvider<TResult> Select<TSource, TResult>(this IncrementalValuesProvider<TSource> source, Func<TSource, CancellationToken, TResult> selector);
 }
 ```
+이 메서드의 반환 유형이 `IncrementalValue[s]Provider`의 인스턴스이기도 하다는 점에 유의하세요. 
 
-Note how the return type of these methods are also an instance of
-`IncrementalValue[s]Provider`. This allows the generator to chain multiple
-transformations together:
+이를 통해 제너레이터는 여러 변환을 함께 연결할 수 있습니다:
 
 ```ascii
  IValueProvider<TSource>                     IValueProvider<TResult1>                 IValueProvider<TResult2>
@@ -203,7 +197,7 @@ transformations together:
     └─────────────┘                            └─────────────┘                           └─────────────┘
 ```
 
-Consider the following simple example:
+예제 : 
 
 ```csharp
 // get the additional text provider
@@ -533,11 +527,9 @@ input hasn't changed.
 
 ### Combine
 
-Combine is the most powerful, but also most complicated transformation. It
-allows a generator to take two input providers and create a single unified
-output provider.
+결합은 가장 강력하지만 가장 복잡한 변환이기도 합니다. 이를 통해 제너레이터는 두 개의 입력 공급자를 가져와 하나의 통합된 출력 공급자를 만들 수 있습니다.
 
-**Single-value to single-value**:
+**단일 값에서 단일 값으로**:
 
 ```csharp
 public static partial class IncrementalValueSourceExtensions
@@ -546,9 +538,7 @@ public static partial class IncrementalValueSourceExtensions
 }
 ```
 
-When combining two single value providers, the resulting node is conceptually
-easy to understand: a new value provider that contains a `Tuple` of the two
-input items.
+두 개의 단일 값 공급자를 결합할 때 결과 노드는 두 입력 항목의 '튜플'을 포함하는 새로운 값 공급자로 개념적으로 쉽게 이해할 수 있습니다.
 
 ```ascii
 
@@ -583,11 +573,14 @@ public static partial class IncrementalValueSourceExtensions
 }
 ```
 
-When combining a multi value provider to a single value provider, however, the
-semantics are a little more complicated. The resulting multi-valued provider
-produces a series of tuples: the left hand side of each tuple is the value
-produced from the multi-value input, while the right hand side is always the
-same single value from the single value provider input.
+그러나 다중 값 공급자를 단일 값 공급자로 결합하는 경우 의미는 조금 더 복잡해집니다. 
+
+결과 다중값 공급자는 일련의 튜플을 생성합니다.
+
+각 튜플의 왼쪽은 다중값 입력에서 생성된 값이고, 
+
+오른쪽은 항상 단일값 공급자 입력에서 생성된 동일한 단일값입니다.
+
 
 ```ascii
  IncrementalValuesProvider<TSource1>
@@ -679,13 +672,11 @@ then the transformation is executed for every tuple.
 
 ### SyntaxValueProvider
 
-Syntax Nodes are not available directly through a value provider. Instead, a
-generator author uses the special `SyntaxValueProvider` (provided via the
-`IncrementalGeneratorInitializationContext.SyntaxProvider`) to create a
-dedicated input node that instead exposes a sub-set of the syntax they are
-interested in. The syntax provider is specialized in this way to achieve a
-desired level of performance.
+구문 노드는 값 공급자를 통해 직접 사용할 수 없습니다.
 
+ 대신 제너레이터 작성자는 특수한 `SyntaxValueProvider`(`IncrementalGeneratorInitializationContext.SyntaxProvider`를 통해 제공)를 사용하여 관심 있는 구문의 하위 집합을 대신 노출하는 전용 입력 노드를 생성합니다. 
+
+구문 제공자는 원하는 수준의 성능을 달성하기 위해 이러한 방식으로 특화되어 있습니다.
 #### CreateSyntaxProvider
 
 Currently the provider exposes a single method `CreateSyntaxProvider` that
@@ -783,8 +774,7 @@ characteristics are still observed when editing a syntax tree.
 
 #### ForAttributeWithMetadataName (FAWMN)
 
-One extremely common action we observe generators being written for is taking
-actions driven on attributes applied to specific syntax constructs.
+제너레이터가 작성되는 매우 일반적인 작업 중 하나는 특정 구문 구조에 적용된 속성에 기반한 작업을 수행하는 것입니다.
 
 ```csharp
 public readonly struct SyntaxValueProvider
@@ -796,32 +786,33 @@ public readonly struct SyntaxValueProvider
 }
 ```
 
-This area is particularly nice for optimization, as we can efficiently eliminate
-a significant number of syntax nodes and edits before even needing to call the
-provided `predicate` from the user, avoiding realizing a significant number of
-`SyntaxNode` instances. Roslyn can even further optimize this by tracking whether or
-not a given attribute could possibly be the attribute the generator cares about by
-maintaining a small index and comparing type names as an initial heuristic.
-This index is cheap to maintain and, importantly, can only have false positives, not
-false negatives. This allows us to eliminate 99% of syntax in a Compilation from ever
-needing to be checked for semantic information (to eliminate false positives from the
-heuristic cache) or by the user `predicate` function (saving a significant number of
-allocations of `SyntaxNode` instances).
+이 영역은 사용자가 제공한 `술어`를 호출하기도 전에 상당한 수의 구문 노드와 편집을 효율적으로 제거하여 상당한 수의 `SyntaxNode` 인스턴스를 구현하지 않아도 되므로 최적화에 특히 유용합니다. 
 
-Given this, when at all possible, it is recommended to use attributes to drive source
-generators, rather than other syntax constructs. Real world testing has indicated this
-approach is usually 99x more efficient than `CreateSyntaxProvider`, even when the
-generator is otherwise not well-behaved; some pathological scenarios are even more efficient
-than that.
 
-Attributes are provided by the user as the fully-qualified metadata name, without the
-assembly name portion. For example, given the C# type `My.Namespace.MyAttribute<T>`,
-the fully-qualified metadata-name would be ``My.Namespace.MyAttribute`1``. Given that
-attributes are usually restricted to specific constructs by an `AttributeUsage`
-attribute, it is common that the `predicate` a user provides will simply return `true`.
-For the transformation step, everything stated in the [previous section](#createsyntaxprovider)
-is still relevant; that step will still be rerun with every change to ensure that changed
-semantics are observed.
+Roslyn은 초기 휴리스틱으로 작은 인덱스를 유지하고 유형 이름을 비교하여 주어진 속성이 생성기가 신경 쓰는 속성일 가능성이 있는지 여부를 추적함으로써 이를 더욱 최적화할 수 있습니다.
+
+
+이 인덱스는 유지 관리 비용이 저렴하며, 중요한 것은 오탐이 아닌 오탐만 있을 수 있다는 점입니다. 
+
+이를 통해 컴파일에서 99%의 구문을 의미론적 정보(휴리스틱 캐시에서 오탐을 제거하기 위해) 또는 사용자 `predicate` 함수에 의해 검사할 필요가 없도록 할 수 있습니다(`SyntaxNode` 인스턴스 할당을 상당히 많이 절약할 수 있습니다).
+
+
+
+
+이러한 점을 고려할 때 가능하면 다른 구문 구조보다는 속성을 사용하여 소스 생성기를 구동하는 것이 좋습니다. 
+
+실제 테스트 결과 이 접근 방식은 일반적으로 제너레이터가 제대로 작동하지 않는 경우에도 `CreateSyntaxProvider`보다 99배 더 효율적이며, 일부 병리적 시나리오에서는 그보다 훨씬 더 효율적이라는 것이 밝혀졌습니다.
+
+어트리뷰트는 어셈블리 이름 부분 없이 사용자가 정규화된 메타데이터 이름으로 제공합니다. 
+
+예를 들어, C# typeMy.Namespace.MyAttribute<T>`,
+
+이 정규화된 메타데이터 이름은 ``My.Namespace.MyAttribute`1``이 됩니다. 
+ 
+속성은 일반적으로 `AttributeUsage` 속성에 의해 특정 구조로 제한되므로, 사용자가 제공하는 `술어`는 단순히 `true`를 반환하는 것이 일반적입니다.
+
+변환 단계의 경우, [이전 섹션](#createsyntaxprovider)에 명시된 모든 내용이 여전히 관련되며, 변경된 의미가 준수되도록 변경할 때마다 해당 단계가 다시 실행됩니다.
+
 
 ## Outputting values
 
@@ -844,10 +835,9 @@ The set of output methods are
 
 **RegisterSourceOutput**:
 
-`RegisterSourceOutput` allows a generator author to produce source files and
-diagnostics that will be included in the users compilation. As input, it takes a
-`Value[s]Provider` and an `Action<SourceProductionContext, TSource>` that will
-be invoked for every value in the value provider.
+등록 소스 출력`은 생성기 작성자가 사용자 컴파일에 포함될 소스 파일과 진단을 생성할 수 있도록 합니다. 
+
+입력으로 `Value[s]Provider`와 값 제공자의 모든 값에 대해 호출될 `Action<SourceProductionContext, TSource>`를 받습니다.
 
 ``` csharp
 public static partial class IncrementalValueSourceExtensions
@@ -857,7 +847,7 @@ public static partial class IncrementalValueSourceExtensions
 }
 ```
 
-The provided `SourceProductionContext` can be used to add source files and report diagnostics:
+제공된 '소스 프로덕션 컨텍스트'는 소스 파일을 추가하고 진단을 보고하는 데 사용할 수 있습니다:
 
 ```csharp
 public readonly struct SourceProductionContext
@@ -902,27 +892,21 @@ namespace Generated
 
 **RegisterImplementationSourceOutput**:
 
-`RegisterImplementationSourceOutput` works in the same way as
-`RegisterSourceOutput` but declares that the source produced has no semantic
-impact on user code from the point of view of code analysis. This allows a host
-such as the IDE, to chose not to run these outputs as a performance
-optimization. A host that produces executable code will always run these
-outputs.
+RegisterImplementationSourceOutput`은 `RegisterSourceOutput`과 같은 방식으로 작동하지만 코드 분석의 관점에서 생성된 소스가 사용자 코드에 의미론적 영향을 미치지 않는다고 선언합니다. 
+
+이를 통해 IDE와 같은 호스트는 성능 최적화를 위해 이러한 출력을 실행하지 않도록 선택할 수 있습니다. 
+
+실행 코드를 생성하는 호스트는 항상 이러한 출력을 실행합니다.
+
 
 **RegisterPostInitializationOutput**:
 
-`RegisterPostInitializationOutput` allows a generator author to provide source
-code immediately after initialization has run. It takes no inputs, and so cannot
-refer to any source code written by the user, or any other compiler inputs.
+'RegisterPostInitializationOutput'을 사용하면 제너레이터 작성자가 초기화가 실행된 직후 소스 코드를 제공할 수 있습니다. 이 함수는 입력을 받지 않으므로 사용자가 작성한 소스 코드나 다른 컴파일러 입력을 참조할 수 없습니다.
 
-Post initialization source is included in the Compilation before any other
-transformations are run, meaning that it will be visible as part of the rest of
-the regular execution pipeline, and an author may ask semantic questions about
-it.
+초기화 후 소스는 다른 변환이 실행되기 전에 컴파일에 포함되므로 나머지 일반 실행 파이프라인의 일부로 표시되며, 작성자는 이에 대해 의미론적 질문을 할 수 있습니다.
+에 대해 시맨틱 질문을 할 수 있습니다.
 
-It is particularly useful for adding attribute definitions to the users'
-source code. These can then be applied by the user in their code, and the
-generator may find the attributed code via the semantic model.
+특히 사용자의 소스 코드에 속성 정의를 추가할 때 유용합니다. 그런 다음 사용자가 코드에 이를 적용할 수 있으며, 생성기는 시맨틱 모델을 통해 어트리뷰션된 코드를 찾을 수 있습니다.
 
 ## Handling Cancellation
 
@@ -979,18 +963,17 @@ public void Initialize(IncrementalGeneratorInitializationContext context)
 
 ## Caching
 
-While the finer grained steps allow for some coarse control of output types via
-the generator host, the performance benefits are only really seen when the
-driver can cache the outputs from one pipeline step to the next. While we have
-generally said that the execute method in an `ISourceGenerator` should be
-deterministic, incremental generators actively _require_ this property to be
-true.
+세분화된 단계를 사용하면 제너레이터 호스트를 통해 출력 유형을 다소 거칠게 제어할 수 있지만, 드라이버가 한 파이프라인 단계에서 다음 단계로 출력을 캐시할 수 있을 때만 성능상의 이점을 실제로 볼 수 있습니다. 
 
-When calculating the required transformations to be applied as part of a step,
-the generator driver is free to look at inputs it has seen before and used
-previous computed and cached values of the transformation for these inputs.
+일반적으로 `ISourceGenerator`의 실행 메서드는 다음과 같아야 한다고 말씀드렸습니다.
+결정론적이어야 한다고 말했지만, 증분 제너레이터는 이 속성이 참일 것을 적극적으로 _요구_합니다.
 
-Consider the following transformation:
+
+
+단계의 일부로 적용할 필수 변환을 계산할 때 제너레이터 드라이버는 이전에 보았던 입력을 자유롭게 살펴보고  
+이러한 입력에 대해 이전에 계산되고 캐시된 변환 값을 사용할 수 있습니다.
+
+다음 변환을 생각해 보세요:
 
 ```csharp
 IValuesProvider<string> transform = context.AdditionalTextsProvider
@@ -998,8 +981,8 @@ IValuesProvider<string> transform = context.AdditionalTextsProvider
                                            .Select(static (p, _) => "prefix_" + p);
 ```
 
-During the first execution of the pipeline each of the two lambdas will be
-executed for each additional file:
+파이프라인을 처음 실행하는 동안 두 람다 각각은 다음과 같이 실행됩니다.
+각 추가 파일에 대해 실행됩니다:
 
 AdditionalText          | Select1    | Select2
 ------------------------|------------|-----------------
@@ -1007,9 +990,7 @@ Text{ Path: "abc.txt" } | "abc.txt"  | "prefix_abc.txt"
 Text{ Path: "def.txt" } | "def.txt"  | "prefix_def.txt"
 Text{ Path: "ghi.txt" } | "ghi.txt"  | "prefix_ghi.txt"
 
-Now consider the case where in some future iteration, the first additional file
-has changed and has a different path, and the second file has changed, but kept
-its path the same.
+이제 향후 반복 작업에서 첫 번째 추가 파일이 변경되어 경로가 달라지고 두 번째 파일이 변경되었지만 경로가 동일하게 유지되는 경우를 생각해 보겠습니다.
 
 AdditionalText               | Select1    | Select2
 -----------------------------|------------|-----------
@@ -1017,10 +998,8 @@ AdditionalText               | Select1    | Select2
 **Text{ Path: "def.txt" }**  |            |
 Text{ Path: "ghi.txt" }      |            |
 
-The generator would run select1 on the first and second files, producing
-"diff.txt" and "def.txt" respectively. However, it would not need to re-run the
-select for the third file, as the input has not changed. It can just use the
-previously cached value.
+생성기는 첫 번째 파일과 두 번째 파일에 대해 select1을 실행하여 각각 "diff.txt"와 "def.txt"를 생성합니다. 그러나 입력이 변경되지 않았으므로 세 번째 파일에 대해 select를 다시 실행할 필요는 없습니다. 이전에 캐시된 값을 사용하면 됩니다.
+
 
 AdditionalText               | Select1        | Select2
 -----------------------------|----------------|-----------
@@ -1028,13 +1007,16 @@ AdditionalText               | Select1        | Select2
 **Text{ Path: "def.txt" }**  | **"def.txt"**  |
 Text{ Path: "ghi.txt" }      | "ghi.txt"      |
 
-Next the driver would look to run Select2. It would operate on `"diff.txt"`
-producing `"prefix_diff.txt"`, but when it comes to `"def.txt"` it can observe
-that the item produced was the same as the last iteration. Even though the
-original input (`Text{ Path: "def.txt" }`) was changed, the result of Select1
-on it was the same. Thus there is no need to re-run Select2 on `"def.txt"` as
-it can just use the cached value from before. Similarly the cached state of
-"ghi.txt" can be used.
+다음으로 드라이버는 Select2를 실행하려고 합니다. 
+
+이 드라이버는 `"diff.txt"`에서 작동하여 `"prefix_diff.txt"`를 생성하지만 `"def.txt"`의 경우 생성된 항목이 마지막 반복과 동일하다는 것을 관찰할 수 있습니다. 
+
+원래 입력(`Text{ Path: "def.txt" }`)이 변경되었음에도 불구하고 Select1의 결과는 동일합니다. 
+
+따라서 `"def.txt"`에서 Select2를 다시 실행할 필요 없이 이전부터 캐시된 값을 사용할 수 있습니다. 
+
+마찬가지로 캐시된 상태의
+"ghi.txt"의 캐시된 상태를 사용할 수 있습니다.
 
 AdditionalText               | Select1        | Select2
 -----------------------------|----------------|----------------------
@@ -1042,9 +1024,9 @@ AdditionalText               | Select1        | Select2
 **Text{ Path: "def.txt" }**  | **"def.txt"**  | "prefix_def.txt"
 Text{ Path: "ghi.txt" }      | "ghi.txt"      | "prefix_ghi.txt"
 
-In this way, only changes that are consequential flow through the pipeline, and
-duplicate work is avoided. If a generator only relies on `AdditionalTexts` then
-the driver knows there can be no work to be done when a `SyntaxTree` changes.
+이렇게 하면 결과적인 변경 사항만 파이프라인을 통해 흐르고 중복 작업을 피할 수 있습니다. 
+
+제너레이터가 `AdditionalTexts`에만 의존하는 경우 드라이버는 `SyntaxTree`가 변경될 때 수행할 작업이 없다는 것을 알고 있습니다.
 
 ### Comparing Items
 
@@ -1091,38 +1073,31 @@ given comparer is not considered.
 
 ### Authoring a cache friendly generator
 
-Much of the success of an incremental generator will depend on creating an
-optimal pipeline that is amenable to caching. This section includes some general
-tips and best practices to achieve that
+증분 생성기의 성공 여부는 캐싱이 가능한 최적의 파이프라인을 만드는 데 달려 있습니다. 
 
-**Extract out information early**: It is best to get the information out of the
-inputs as early as possible in the pipeline. This ensures the host is not
-caching large, expensive object such as symbols.
+이 섹션에는 이를 달성하기 위한 몇 가지 일반적인 팁과 모범 사례가 포함되어 있습니다.
 
-**Use value types where possible**: Value types are more amenable to caching and
-usually have well defined and easy to understand comparison semantics.
+**정보를 빨리 빼내기**: 파이프라인에서 가능한 한 빨리 입력에서 정보를 꺼내는 것이 가장 좋습니다. 이렇게 하면 호스트가 심볼과 같은 크고 비용이 많이 드는 객체를 캐싱하지 않습니다.
 
-**Use multiple transformations**: The more transformations you break the
-operations into, the more opportunities there are to cache. Think of
-transformations as being 'check points' in the execution graph. The more check
-points the more chances there are to match a cached value and skip any remaining
-work.
+**가능하면 값 유형을 사용하세요**: 값 유형은 캐싱에 더 적합하며 일반적으로 비교 의미가 잘 정의되어 있고 이해하기 쉽습니다.
 
-**Build a data model**: Rather than trying to pass each input item into a
-`Register...Output` method, consider building a data model to be the final item
-passed to the output. Use the transformations to manipulate the data model, and
-have well defined equality that allows you to correctly compare between
-revisions of the model. This also makes testing the final `Register...Outputs`
-significantly simpler: you can just call the method with a dummy data model and
-check the generated code, rather than trying to emulate the incremental
-transformations.
+**다중 변환 사용**: 연산을 더 많은 변환으로 나눌수록 캐시할 수 있는 기회가 많아집니다. 변환을 실행 그래프의 '체크 포인트'라고 생각하면 됩니다. 체크 포인트가 많을수록 캐시된 값과 일치하고 나머지 작업을 건너뛸 수 있는 기회가 많아집니다.
 
-**Consider the order of combines**: Ensure that you are only combining the
-minimal amount of information needed (this comes back to 'Extract out
-information early'). 
 
-Consider the following (incorrect) combine where the basic inputs are combined,
-then used to generate some source:
+**데이터 모델 구축**: 각 입력 항목을 `등록...출력` 메서드에 전달하려고 하는 대신, 출력에 전달되는 최종 항목이 될 데이터 모델을 구축하는 것을 고려하세요. 
+
+변환을 사용하여 데이터 모델을 조작하고, 모델의 수정본 간에 정확하게 비교할 수 있도록 동등성을 잘 정의하세요. 
+
+이렇게 하면 증분 변환을 에뮬레이트하는 대신 더미 데이터 모델로 메서드를 호출하고 생성된 코드를 확인하기만 하면 되므로 최종 `Register...Outputs`를 훨씬 더 간단하게 테스트할 수 있습니다.
+
+
+
+**결합 순서를 고려하세요**: 
+필요한 최소한의 정보만 결합하고 있는지 확인하세요(이는 '정보 빨리 추출하기'로 다시 돌아옵니다). 
+
+기본 입력이 결합된 다음 소스를 생성하는 데 사용되는 다음과 같은 (잘못된) 결합을 고려해 보세요:
+
+
 
 ```csharp
 public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -1139,11 +1114,9 @@ public void Initialize(IncrementalGeneratorInitializationContext context)
         // produce source ...
     });
 ```
+컴파일이 변경될 때마다, 즉 사용자가 IDE에 입력하는 동안 자주 변경될 때마다 `RegisterSourceOutput`이 다시 실행됩니다. 
 
-Any time the compilation changes, which it will frequently as the user is typing
-in the IDE, then `RegisterSourceOutput` will get re-run. Instead, look up the
-compilation dependant information first, then combine _that_ with the additional
-files:
+대신 컴파일 종속 정보를 먼저 조회한 다음 _그것_을 추가 파일과 결합하세요.
 
 ```csharp
 public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -1160,8 +1133,6 @@ public void Initialize(IncrementalGeneratorInitializationContext context)
     });
 }
 ```
+이제 사용자가 IDE에 입력하면 `assemblyName` 트랜스폼이 다시 실행되지만 매우 저렴하고 매번 동일한 값을 빠르게 반환합니다. 
 
-Now, as the user types in the IDE, the `assemblyName` transform will re-run, but
-is very cheap and quickly returns what is likely the same value each time. That
-means that unless the additional texts have also changed, the host does not need
-to re-run the combine or re-generate any of the source.
+즉, 추가 텍스트도 변경되지 않는 한 호스트는 결합을 다시 실행하거나 소스를 다시 생성할 필요가 없습니다.
